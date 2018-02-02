@@ -10,148 +10,146 @@
     manually to produce the proper credential file before putting it 
     into a scheduled task.
     
-    You must modify the $Key variable below to get unique encryption, 
-    otherwise anyone who downloads this script would have the same encryption 
-    key you do!
-    
-    Credit to Daniel for the idea of using a unique key value in the
-    ConvertTo-SecureString cmdlet allowing multiple computers to use this
-    credential file.
-    LINK: http://poshcode.org/3752
-    
     Requires VMware PowerCLI be installed.
+
+    How to use:
+    1. Log into the server where you intend to run this script as a Scheduled Task. You must log in using the service
+       account name and password you will be using in the Task Scheduler.
+    2. Modify the default parameter values to match your environment.  Do not put in anything for $Credential.  Fields
+       you should modify are:  VICenter, To, From and SMTPServer.  You can change Path if you want to save your reports
+       in an alternative location, default is a Reports subfolder where you have the script stored.
+    3. Run the script.  It will prompt you for the username and password to authenticate to your VCenter.
+    4. Create your scheduled task.
     
-    *** IMPORTANT ***
-    Required:  Modify the $Key variable to get unique encryption on your
-    credentials.
-    
-    Idea for the unique
 .PARAMETER VIServer
     Name of your vSphere vCenter server, or the name of your ESXi host.
-.PARAMETER Admin
-    Name of the administrative account needed to authenticate to vSphere.
-.PARAMETER PathToCredentials
-    Path where the script will save the credential file.
-.PARAMETER PathToReport
+
+.PARAMETER Credential
+    PSCredential to authenticate to VIServer.  If you don't specify the script will prompt you for the credential and then
+    save it in vcenter.xml.  To run this properly you must be logged in using the service account name of that will be running
+    this script in the Task Scheduler.
+
+.PARAMETER Path
     Path where the HTML report will be saved.
+
 .PARAMETER To
     Who the emailed report is going to
+
 .PARAMETER From
     Who the emailed report is coming from
+
 .PARAMETER SMTPServer
     The IP address or name of the SMTP relay you want to use
+
 .EXAMPLE
-    .\Report-Snapshots.ps1 -VIServer VCenter1 -Admin Administrator -PathToCredentials \\server\share\cred -PathToReport \\server\share\reports
+    .\New-VMwareSnapshotReport.ps1 -VIServer VCenter1 -Path \\server\share\reports
     
     Create a report of all the snapshots of VM's under the control of the
-    VCenter1 vCenter server.  You will authenticate using the Administrator
-    account and save the credential file on "server", in the share called
-    "share" and the directory "cred".  The resulting HTML report will be
+    VCenter1 vCenter server.  The resulting HTML report will be
     saved on the same server and share, but in the directory "reports".
+
 .EXAMPLE
-    .\Report-Snapshots.ps1 -VIServer VCenter1 -Admin Administrator -PathToCredentials \\server\share\cred -PathToReport \\server\share\reports -To "me@mydomain.com" -From "you@yourdomain.com" -SMTPServer "MyExchange1"
+    .\New-VMwareSnapshotReport.ps1 -VIServer VCenter1 -Path \\server\share\reports -To "me@mydomain.com" -From "you@yourdomain.com" -SMTPServer "MyExchange1"
     
     Same as the example above, but overriding the default mailing parameters
     to send to me@mydomain.com, from you@yourdomain.com and using the MyExchange1
     server to relay the email.
+
 .INPUTS
     None
 .OUTPUTS
-    HTML Report:  SnapshotReport.HTML
+    None
+
 .NOTES
     Author:            Martin Pugh
-    Key Idea:          Daniel (http://poshcode.org/3752)
     Twitter:           @thesurlyadm1n
     Spiceworks:        Martin9700
     Blog:              www.thesurlyadmin.com
        
     Changelog:
-       1.3             Fixed credential function (was calling it wrong, how come no one told me?!).  Added
-                       PathToCredentials and PathToReport to default to script path.  BIG: added new field
+       MLP - 2/1/18    Rename to New-VMwareSnapShot.  Updated to use VMware module, better credential handling 
+                       and updated row coloring to group off username.  
+       MLP             Fixed credential function (was calling it wrong, how come no one told me?!).  Added
+                       PathToCredentials and Path to default to script path.  BIG: added new field
                        'Creator'.  Modified error handling (minor).  
-       1.2             Updated Get-Credentials function to support domain level credentials in the
+       MLP             Updated Get-Credentials function to support domain level credentials in the
                        domainname\username format.
-       1.1             By request added a calculation on how old the snapshot is in days. Discovered 
+       MLP             By request added a calculation on how old the snapshot is in days. Discovered 
                        a "bug" when running the script on a VMware 4.1 system: the
                        SizeGB property does not exist!  Changed to use SizeMB and then manually
                        calculate the snapshot size in GB. Added some better error trapping.  Also
                        parameterized the email settings.
-       1.0             Initial Release
+       MLP             Initial Release
 .LINK
-    http://community.spiceworks.com/scripts/show/1871-vm-snapshot-report
-.LINK
-    http://poshcode.org/3752
+    https://github.com/martin9700/New-VMwareSnapShotReport
 #>
+[CmdletBinding()]
 Param (
     [Alias("Host")]
     [string]$VIServer = "vcenterserver",
-    [string]$Admin = "yourdomain/youradminacct",
-    [string]$PathToCredentials,
-    [string]$PathToReport,
+    [PSCredential]$Credential,
+    [string]$Path,
     
     [string]$To = "martin@pughspace.com",
     [string]$From = "no-reply@vmwaresnapshot.com",
     [string]$SMTPServer = "yoursmtpserver"
 )
 
-#You must change these values to securely save your credential files
-$Key = [byte]33,33,33,33,33,33,33,33,33,33,33,33,33,33,33,33
 
 #region Functions
-
-Function Get-Credentials {
-    Param (
-	    [String]$AuthUser = $env:USERNAME,
-        [string]$PathToCred
-    )
-
-    #Build the path to the credential file
-    $CredFile = $AuthUser.Replace("\","~")
-    If (-not $PathToCred)
-    {
-        $PathToCred = Split-Path $MyInvocation.MyCommand.Path
-    }
-    $File = Join-Path -Path $PathToCred -ChildPath "\Credentials-$CredFile.crd"
-	#And find out if it's there, if not create it
-    If (-not (Test-Path $File))
-	{	(Get-Credential $AuthUser).Password | ConvertFrom-SecureString -Key $Key | Set-Content $File
-    }
-	#Load the credential file 
-    $Password = Get-Content $File | ConvertTo-SecureString -Key $Key
-    $AuthUser = (Split-Path $File -Leaf).Substring(12).Replace("~","\")
-    $AuthUser = $AuthUser.Substring(0,$AuthUser.Length - 4)
-	$Credential = New-Object System.Management.Automation.PsCredential($AuthUser,$Password)
-    Return $Credential
-}
-
-
-Function Set-AlternatingRows {
+Function Set-GroupRowColorsByColumn {
+    <#
+    #>
     [CmdletBinding()]
-         Param(
-             [Parameter(Mandatory=$True,ValueFromPipeline=$True)]
-             [object[]]$HTMLDocument,
-      
-             [Parameter(Mandatory=$True)]
-             [string]$CSSEvenClass,
-      
-             [Parameter(Mandatory=$True)]
-             [string]$CSSOddClass
-         )
-     Begin {
-         $ClassName = $CSSEvenClass
-     }
-     Process {
-         [string]$Line = $HTMLDocument
-         $Line = $Line.Replace("<tr>","<tr class=""$ClassName"">")
-         If ($ClassName -eq $CSSEvenClass)
-         {    $ClassName = $CSSOddClass
-         }
-         Else
-         {    $ClassName = $CSSEvenClass
-         }
-         $Line = $Line.Replace("<table>","<table width=""50%"">")
-         Return $Line
-     }
+    Param (
+        [Parameter(Mandatory,ValueFromPipeline)]
+        [string[]]$InputObject,
+        [Parameter(Mandatory)]
+        [string]$ColumnName,
+        [string]$CSSEvenClass = "TREven",
+        [string]$CSSOddClass = "TROdd"
+    )
+    Process {
+        $NewHTML = ForEach ($Line in $InputObject)
+        {
+            If ($Line -like "*<th>*")
+            {
+                If ($Line -notlike "*$ColumnName*")
+                {
+                    Write-Error "Unable to locate a column named $ColumnName" -ErrorAction Stop
+                }
+                $Search = $Line | Select-String -Pattern "<th>.*?</th>" -AllMatches
+                $Index = 0
+                ForEach ($Column in $Search.Matches)
+                {
+                    If (($Column.Groups.Value -replace "<th>|</th>","") -eq $ColumnName)
+                    {
+                        Break
+                    }
+                    $Index ++
+                }
+            }
+            If ($Line -like "*<td>*")
+            {
+                $Search = $Line | Select-String -Pattern "<td>.*?</td>" -AllMatches
+                If ($LastColumn -ne $Search.Matches[$Index].Value)
+                {
+                    If ($Class -eq $CSSEvenClass)
+                    {
+                        $Class = $CSSOddClass
+                    }
+                    Else
+                    {
+                        $Class = $CSSEvenClass
+                    }
+                }
+                $LastColumn = $Search.Matches[$Index].Value
+                $Line = $Line.Replace("<tr>","<tr class=""$Class"">")
+            }
+            Write-Output $Line
+        }
+        Write-Output $NewHTML
+    }
 }
 
 
@@ -165,28 +163,54 @@ Function Get-SnapshotCreator {
 }
 #endregion
 
-If (-not (Get-PSSnapin VMware.VimAutomation.Core -ErrorAction SilentlyContinue))
-{   Try { Add-PSSnapin VMware.VimAutomation.Core -ErrorAction Stop }
-    Catch { Throw "Problem loading VMware.VimAutomation.Core snapin because ""$($Error[1])""" }
+If (-not (Get-Module VMware.VimAutomation.Core -ErrorAction SilentlyContinue))
+{   Try { 
+        Import-Module VMware.VimAutomation.Core -ErrorAction Stop 
+    }
+    Catch { 
+        Write-Error "Problem loading VMware.VimAutomation.Core snapin because ""$_""" -ErrorAction Stop
+    }
 }
 
-If (-not $PathToCredentials)
+If (-not $Path)
 {
-    $PathToCredentials = Split-Path $MyInvocation.MyCommand.Path
+    $Path = Join-Path -Path (Split-Path $MyInvocation.MyCommand.Path) -ChildPath Reports
+    If (-not (Test-Path $Path))
+    {
+        $null = New-Item -Path $Path -ItemType Directory
+    }
 }
-
-If (-not $PathToReport)
+ElseIf (-not (Test-Path $Path))
 {
-    $PathToReport = Split-Path $MyInvocation.MyCommand.Path
+    Write-Error "Output path ($Path) does not exist" -ErrorAction Stop
 }
 
-$Cred = Get-Credentials $Admin $PathToCredentials
+If (-not $Credential)
+{
+    $CredentialPath = Join-Path -Path (Split-Path $MyInvocation.MyCommand.Path) -ChildPath "Vcenter.xml"
+    If (Test-Path -Path $CredentialPath)
+    {
+        $Credential = Import-Clixml -Path $CredentialPath
+    }
+    Else
+    {
+        $Credential = Get-Credential -Message "Please enter your VCenter credentials.  Make sure you are logged in under the service account that will be running this script"
+        If (-not $Credential)
+        {
+            Write-Error "You did not enter credentials, aborting" -ErrorAction Stop
+        }
+        $Credential | Export-Clixml -Path $CredentialPath
+    }
+}
+
+Write-Verbose "Connecting to $VIServer..."
 Try {
-    $Conn = Connect-VIServer $VIServer -Credential $Cred -ErrorAction Stop 3>$null
+    $Conn = Connect-VIServer $VIServer -Credential $Credential -ErrorAction Stop 3>$null
 }
 Catch {
-    Throw "Error connecting to $VIServer because ""$($Error[1])"""
+    Write-Error "Error connecting to $VIServer because ""$_""" -ErrorAction Stop
 }
+Write-Verbose "Connected"
 
 $Header = @"
 <style>
@@ -202,6 +226,7 @@ Snapshot Report - $VIServer
 </title>
 "@
 
+Write-Verbose "Gathering snapshots (this will take awhile)..."
 $Report = Get-VM | 
     Get-Snapshot | 
     Select VM,
@@ -217,17 +242,21 @@ If (-not $Report)
         VM = "No snapshots found on any VM's controlled by $VIServer"
         Name = ""
         Description = ""
-        Size = ""
+        SizeGB = ""
         Creator = ""
         Created = ""
         'Days Old' = ""
     }
 }
 
+Write-Verbose "Creating report and emailing"
 $Report = $Report | 
-    ConvertTo-Html -Head $Header -PreContent "<p><h2>Snapshot Report - $VIServer</h2></p><br>" | 
-    Set-AlternatingRows -CSSEvenClass even -CSSOddClass odd
-$Report | Out-File $PathToReport\SnapShotReport.html
+    Sort Creator,VM | 
+    ConvertTo-Html -Head $Header -PreContent "<p><h2>Snapshot Report - $VIServer</h2></p><br>" -PostContent "<p><br/><br/><h5>Run Date: $(Get-Date)</h5></p>" | 
+    Set-GroupRowColorsByColumn -ColumnName Creator -CSSEvenClass even -CSSOddClass odd
+$ReportName = Join-Path -Path $Path -ChildPath "SnapshotReport-$(Get-Date -Format 'MM-dd-yyyy').html"
+$Report | Out-File -FilePath $ReportName
+
 
 $MailSplat = @{
     To         = $To
